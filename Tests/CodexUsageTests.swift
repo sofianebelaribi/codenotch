@@ -294,7 +294,10 @@ final class CodexUsageTests: XCTestCase {
          "rate_limit":{"primary_window":{"used_percent":25,"limit_window_seconds":18000},
           "secondary_window":{"used_percent":10,"limit_window_seconds":604800}}}
         """)
-        XCTAssertEqual(result.map(\.id), ["primary", "secondary", "spark", "code-review"])
+        XCTAssertEqual(result.map(\.id), ["primary", "secondary", "spark", "code-review", "credit-balance"])
+        XCTAssertEqual(result.last?.label, "Credit balance")
+        XCTAssertEqual(result.last?.usedText, "100")
+        XCTAssertEqual(result.last?.detail, "100")
         XCTAssertEqual(result.first?.id, "primary")
         XCTAssertEqual(result.first?.usedFraction, 0.25)
     }
