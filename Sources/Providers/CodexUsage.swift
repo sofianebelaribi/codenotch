@@ -150,10 +150,9 @@ enum CodexUsage {
                 ?? (try? c.decodeIfPresent(Bool.self, forKey: .has_credits))
             unlimited = try? c.decodeIfPresent(Bool.self, forKey: .unlimited)
 
-            if let text = try? c.decodeIfPresent(String.self, forKey: .balance) {
-                balance = text?.trimmingCharacters(in: .whitespacesAndNewlines)
-            } else if let number = try? c.decodeIfPresent(Double.self, forKey: .balance),
-                      let number {
+            if let text = try? c.decode(String.self, forKey: .balance) {
+                balance = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            } else if let number = try? c.decode(Double.self, forKey: .balance) {
                 balance = String(format: "%g", number)
             } else {
                 balance = nil
