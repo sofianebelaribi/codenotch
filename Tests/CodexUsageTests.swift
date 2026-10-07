@@ -21,16 +21,58 @@ final class CodexUsageTests: XCTestCase {
         """)
         // Spark is 99% used and listed first in the extras, but the ring
         // follows `windows.first`, which has to stay the main primary.
-        XCTAssertEqual(result.map(\.duration), [18000, 604800, 18000, 604800, 18000])
+        XCTAssertEqual(result.map(\.duration), [18000, 604800, 18000, 604800, 18000, nil])
         XCTAssertEqual(result.map(\.id),
-                       ["primary", "secondary", "spark", "code-review", "code-review-secondary"])
+                       ["primary", "secondary", "spark", "code-review", "code-review-secondary", "credit-balance"])
         XCTAssertEqual(result.map(\.group),
-                       [nil, nil, "Spark", "Code review", "Code review"] as [String?])
+                       [nil, nil, "Spark", "Code review", "Code review", nil] as [String?])
         XCTAssertEqual(result.map(\.label),
-                       ["5h limit", "Weekly limit", "5h limit", "Weekly limit", "5h limit"])
-        XCTAssertEqual(result.map(\.usedFraction), [0.25, 0.10, 0.99, 0.90, 0.15])
+                       ["5h limit", "Weekly limit", "5h limit", "Weekly limit", "5h limit", "Credits"])
+        XCTAssertEqual(result.map(\.usedFraction), [0.25, 0.10, 0.99, 0.90, 0.15, nil])
+        XCTAssertEqual(result.last?.usedText, "100")
         XCTAssertEqual(result.first?.id, "primary")
         XCTAssertEqual(result.first?.resetsAt, Date(timeIntervalSince1970: 1_800_001_000))
+    }
+
+    func testPurchasedCreditBalanceIsShownAlongsideNormalLimits() throws {
+        let result = try windows("""
+        {"rate_limit":{
+          "primary_window":{"used_percent":25,"limit_window_seconds":18000},
+          "secondary_window":{"used_percent":10,"limit_window_seconds":604800}},
+         "credits":{"has_credits":true,"unlimited":false,"balance":"766.76"}}
+        """)
+        XCTAssertEqual(result.map(\.id), ["primary", "secondary", "credit-balance"])
+        let credits = try XCTUnwrap(result.last)
+        XCTAssertEqual(credits.label, "Credits")
+        XCTAssertEqual(credits.usedText, "766.76")
+        XCTAssertNil(credits.usedFraction)
+        XCTAssertTrue(credits.prefersUsedText)
+    }
+
+    func testCamelCaseAppServerCreditsAreAccepted() throws {
+        let result = try windows("""
+        {"rate_limit":{"primary_window":{"used_percent":1,"limit_window_seconds":18000}},
+         "credits":{"hasCredits":true,"unlimited":false,"balance":42.5}}
+        """)
+        XCTAssertEqual(result.last?.id, "credit-balance")
+        XCTAssertEqual(result.last?.usedText, "42.5")
+    }
+
+    func testNoPurchasedCreditsDoesNotAddABalanceRow() throws {
+        let result = try windows("""
+        {"rate_limit":{"primary_window":{"used_percent":1,"limit_window_seconds":18000}},
+         "credits":{"has_credits":false,"unlimited":false,"balance":null}}
+        """)
+        XCTAssertEqual(result.map(\.id), ["primary"])
+    }
+
+    func testUnlimitedCreditsAreNamedInsteadOfInventingABalance() throws {
+        let result = try windows("""
+        {"rate_limit":{"primary_window":{"used_percent":1,"limit_window_seconds":18000}},
+         "credits":{"has_credits":true,"unlimited":true,"balance":null}}
+        """)
+        XCTAssertEqual(result.last?.id, "credit-balance")
+        XCTAssertEqual(result.last?.usedText, "Unlimited")
     }
 
     /// The reported case: a free-plan account's primary window was 30 days,
