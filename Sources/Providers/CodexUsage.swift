@@ -97,6 +97,9 @@ enum CodexUsage {
         /// credits under a workspace spend control, which is the only
         /// allowance that account can show.
         let spend_control: SpendControl?
+        /// Purchased Codex credits reported alongside the rolling limits.
+        /// This is distinct from reset credits and from Business spend control.
+        let credits: Credits?
 
         private enum CodingKeys: String, CodingKey {
             case rate_limit
@@ -104,6 +107,7 @@ enum CodexUsage {
             case additional_rate_limits
             case code_review_rate_limit
             case spend_control
+            case credits
         }
 
         init(from decoder: Decoder) throws {
@@ -121,6 +125,39 @@ enum CodexUsage {
                 RateLimit.self, forKey: .code_review_rate_limit
             )
             spend_control = try? container.decodeIfPresent(SpendControl.self, forKey: .spend_control)
+            credits = try? container.decodeIfPresent(Credits.self, forKey: .credits)
+        }
+    }
+
+    private struct Credits: Decodable {
+        let hasCredits: Bool?
+        let unlimited: Bool?
+        let balance: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case hasCredits
+            case has_credits
+            case unlimited
+            case balance
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            hasCredits = (try? c.decodeIfPresent(Bool.self, forKey: .hasCredits))
+                ?? (try? c.decodeIfPresent(Bool.self, forKey: .has_credits))
+            unlimited = try? c.decodeIfPresent(Bool.self, forKey: .unlimited)
+            if let text = try? c.decodeIfPresent(String.self, forKey: .balance) {
+                balance = text
+            } else if let number = try? c.decodeIfPresent(Double.self, forKey: .balance) {
+                balance = number.map { Self.format($0) }
+            } else {
+                balance = nil
+            }
+        }
+
+        private static func format(_ value: Double) -> String {
+            if value.rounded() == value { return String(Int(value)) }
+            return value.formatted(.number.precision(.fractionLength(0...2)))
         }
     }
 
@@ -316,6 +353,27 @@ enum CodexUsage {
                 to: &windows
             )
         }
+        // Purchased credits are supplemental to the normal 5h/weekly limits.
+        // Keep them as a compact tooltip row so they never replace the Codex
+        // headline ring or weekly ring.
+        if let credits = response.credits {
+            if credits.unlimited == true {
+                windows.append(LimitWindow(
+                    id: "credit-balance",
+                    label: L10n.t("Credits"),
+                    usedText: L10n.t("Unlimited"),
+                    prefersUsedText: true
+                ))
+            } else if credits.hasCredits != false, let balance = credits.balance, !balance.isEmpty {
+                windows.append(LimitWindow(
+                    id: "credit-balance",
+                    label: L10n.t("Credits"),
+                    usedText: balance,
+                    prefersUsedText: true
+                ))
+            }
+        }
+
         // No rolling windows at all: a credit-based seat. Its cap is the ring.
         if windows.isEmpty, let credit = response.spend_control?.individual_limit,
            let pct = credit.used_percent {
