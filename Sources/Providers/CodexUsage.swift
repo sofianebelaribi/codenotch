@@ -93,21 +93,21 @@ enum CodexUsage {
         let plan_type: String?
         let additional_rate_limits: [AdditionalRateLimit]
         let code_review_rate_limit: RateLimit?
+        /// Purchased Codex credits reported alongside the ordinary 5h/weekly
+        /// windows. This is a balance, not another rate-limit ring.
+        let credits: CreditBalance?
         /// Business and Team seats have no rolling windows; they draw on
         /// credits under a workspace spend control, which is the only
         /// allowance that account can show.
         let spend_control: SpendControl?
-        /// Purchased Codex credits reported alongside the rolling limits.
-        /// This is distinct from reset credits and from Business spend control.
-        let credits: Credits?
 
         private enum CodingKeys: String, CodingKey {
             case rate_limit
             case plan_type
             case additional_rate_limits
             case code_review_rate_limit
-            case spend_control
             case credits
+            case spend_control
         }
 
         init(from decoder: Decoder) throws {
@@ -124,12 +124,15 @@ enum CodexUsage {
             code_review_rate_limit = try? container.decodeIfPresent(
                 RateLimit.self, forKey: .code_review_rate_limit
             )
+            credits = try? container.decodeIfPresent(CreditBalance.self, forKey: .credits)
             spend_control = try? container.decodeIfPresent(SpendControl.self, forKey: .spend_control)
-            credits = try? container.decodeIfPresent(Credits.self, forKey: .credits)
         }
     }
 
-    private struct Credits: Decodable {
+    /// Codex has shipped this object in both backend and app-server responses.
+    /// The balance is usually a decimal string, while some clients expose it
+    /// as a number; accept both without rounding it to an integer.
+    private struct CreditBalance: Decodable {
         let hasCredits: Bool?
         let unlimited: Bool?
         let balance: String?
@@ -146,18 +149,21 @@ enum CodexUsage {
             hasCredits = (try? c.decodeIfPresent(Bool.self, forKey: .hasCredits))
                 ?? (try? c.decodeIfPresent(Bool.self, forKey: .has_credits))
             unlimited = try? c.decodeIfPresent(Bool.self, forKey: .unlimited)
-            if let text = try? c.decodeIfPresent(String.self, forKey: .balance) {
-                balance = text
-            } else if let number = try? c.decodeIfPresent(Double.self, forKey: .balance) {
-                balance = number.map { Self.format($0) }
+
+            if let text = try? c.decode(String.self, forKey: .balance) {
+                balance = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            } else if let number = try? c.decode(Double.self, forKey: .balance) {
+                balance = String(format: "%g", number)
             } else {
                 balance = nil
             }
         }
 
-        private static func format(_ value: Double) -> String {
-            if value.rounded() == value { return String(Int(value)) }
-            return value.formatted(.number.precision(.fractionLength(0...2)))
+        var displayText: String? {
+            if unlimited == true { return L10n.t("Unlimited") }
+            if hasCredits == false { return nil }
+            guard let balance, !balance.isEmpty else { return nil }
+            return balance
         }
     }
 
@@ -353,27 +359,6 @@ enum CodexUsage {
                 to: &windows
             )
         }
-        // Purchased credits are supplemental to the normal 5h/weekly limits.
-        // Keep them as a compact tooltip row so they never replace the Codex
-        // headline ring or weekly ring.
-        if let credits = response.credits {
-            if credits.unlimited == true {
-                windows.append(LimitWindow(
-                    id: "credit-balance",
-                    label: L10n.t("Credits"),
-                    usedText: L10n.t("Unlimited"),
-                    prefersUsedText: true
-                ))
-            } else if credits.hasCredits != false, let balance = credits.balance, !balance.isEmpty {
-                windows.append(LimitWindow(
-                    id: "credit-balance",
-                    label: L10n.t("Credits"),
-                    usedText: balance,
-                    prefersUsedText: true
-                ))
-            }
-        }
-
         // No rolling windows at all: a credit-based seat. Its cap is the ring.
         if windows.isEmpty, let credit = response.spend_control?.individual_limit,
            let pct = credit.used_percent {
@@ -384,6 +369,22 @@ enum CodexUsage {
                                        used: credit.used.map { Int($0.rounded()) },
                                        resetsAt: resets))
         }
+
+        // Personal plans can have both the normal 5h/weekly allowance and a
+        // purchased credit balance. Keep the balance as a compact tooltip row;
+        // it must never replace the primary ring. Business/Team already use the
+        // spend-control "credits" window above, so do not show the same concept twice.
+        if !windows.contains(where: { $0.id == "credits" }),
+           let balance = response.credits?.displayText {
+            windows.append(LimitWindow(
+                id: "credit-balance",
+                label: L10n.t("Credit balance"),
+                usedText: balance,
+                detail: balance,
+                prefersUsedText: true
+            ))
+        }
+
         guard !windows.isEmpty else {
             throw UsageProviderError.nothingMetered(L10n.t("Codex reported no usage windows"))
         }
