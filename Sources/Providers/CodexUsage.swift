@@ -131,7 +131,7 @@ enum CodexUsage {
 
     /// Codex has shipped this object in both backend and app-server responses.
     /// The balance is usually a decimal string, while some clients expose it
-    /// as a number; accept both without rounding it to an integer.
+    /// as a number. Keep the raw value for decoding, then round only for display.
     private struct CreditBalance: Decodable {
         let hasCredits: Bool?
         let unlimited: Bool?
@@ -162,8 +162,9 @@ enum CodexUsage {
         var displayText: String? {
             if unlimited == true { return L10n.t("Unlimited") }
             if hasCredits == false { return nil }
-            guard let balance, !balance.isEmpty else { return nil }
-            return balance
+            guard let balance, !balance.isEmpty,
+                  let value = Double(balance), value.isFinite else { return nil }
+            return String(Int(value.rounded()))
         }
     }
 
