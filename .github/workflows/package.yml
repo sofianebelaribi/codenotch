@@ -17,7 +17,7 @@ on:
 # even when it built the older commit. Queued rather than cancelled so a push
 # is never left without its build; a newer push still replaces one waiting.
 concurrency:
-  group: package-${{ github.ref }}
+  group: package-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: true
 
 jobs:
