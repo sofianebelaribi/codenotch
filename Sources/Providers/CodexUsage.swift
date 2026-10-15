@@ -93,6 +93,8 @@ enum CodexUsage {
         let plan_type: String?
         let additional_rate_limits: [AdditionalRateLimit]
         let code_review_rate_limit: RateLimit?
+        /// Purchased credit balance is separate from the regular rate limits.
+        let credits: CreditBalance?
         /// Business and Team seats have no rolling windows; they draw on
         /// credits under a workspace spend control, which is the only
         /// allowance that account can show.
@@ -103,6 +105,7 @@ enum CodexUsage {
             case plan_type
             case additional_rate_limits
             case code_review_rate_limit
+            case credits
             case spend_control
         }
 
@@ -121,6 +124,38 @@ enum CodexUsage {
                 RateLimit.self, forKey: .code_review_rate_limit
             )
             spend_control = try? container.decodeIfPresent(SpendControl.self, forKey: .spend_control)
+            credits = try? container.decodeIfPresent(CreditBalance.self, forKey: .credits)
+        }
+    }
+
+    /// The backend and native app-server use snake_case and camelCase respectively.
+    /// Display a rounded integer, but retain the reported numeric precision while parsing.
+    private struct CreditBalance: Decodable {
+        let hasCredits: Bool?
+        let unlimited: Bool?
+        let balance: Double?
+
+        private enum CodingKeys: String, CodingKey {
+            case hasCredits, has_credits, unlimited, balance
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            hasCredits = (try? c.decode(Bool.self, forKey: .hasCredits))
+                ?? (try? c.decode(Bool.self, forKey: .has_credits))
+            unlimited = try? c.decode(Bool.self, forKey: .unlimited)
+            if let text = try? c.decode(String.self, forKey: .balance) {
+                balance = Double(text.trimmingCharacters(in: .whitespacesAndNewlines))
+            } else {
+                balance = try? c.decode(Double.self, forKey: .balance)
+            }
+        }
+
+        var displayText: String? {
+            if unlimited == true { return L10n.t("Unlimited") }
+            if hasCredits == false { return nil }
+            guard let balance, balance.isFinite else { return nil }
+            return String(format: "%.0f", balance.rounded())
         }
     }
 
@@ -325,6 +360,18 @@ enum CodexUsage {
                                        remaining: credit.limit.flatMap { l in credit.used.map { Int((l - $0).rounded()) } },
                                        used: credit.used.map { Int($0.rounded()) },
                                        resetsAt: resets))
+        }
+        // Keep purchased credits as a compact tooltip row, never a quota ring.
+        // Business/Team spend-control accounts already have a "credits" window.
+        if !windows.contains(where: { $0.id == "credits" }),
+           let balance = response.credits?.displayText {
+            windows.append(LimitWindow(
+                id: "credit-balance",
+                label: L10n.t("Credit balance"),
+                usedText: balance,
+                detail: balance,
+                prefersUsedText: true
+            ))
         }
         guard !windows.isEmpty else {
             throw UsageProviderError.nothingMetered(L10n.t("Codex reported no usage windows"))
